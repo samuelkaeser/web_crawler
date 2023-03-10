@@ -7,4 +7,5 @@ edition = "2021"
 
 [dependencies]
 discv5 = "0.2.1"
+libsecp256k1 = "0.7.1"
 tokio = { version = "1.26.0", features = ["full"] }
