@@ -1,0 +1,12 @@
+/home/sam/Rustprojects/web_scraper/target/debug/deps/polyval-8ac55fd1edafccf4.rmeta: /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/lib.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/soft64.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/mulx.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/autodetect.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/clmul.rs
+
+/home/sam/Rustprojects/web_scraper/target/debug/deps/libpolyval-8ac55fd1edafccf4.rlib: /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/lib.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/soft64.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/mulx.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/autodetect.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/clmul.rs
+
+/home/sam/Rustprojects/web_scraper/target/debug/deps/polyval-8ac55fd1edafccf4.d: /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/lib.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/soft64.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/mulx.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/autodetect.rs /home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/clmul.rs
+
+/home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/lib.rs:
+/home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend.rs:
+/home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/soft64.rs:
+/home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/mulx.rs:
+/home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/autodetect.rs:
+/home/sam/.cargo/registry/src/github.com-1ecc6299db9ec823/polyval-0.5.3/src/backend/clmul.rs:
