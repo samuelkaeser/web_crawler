@@ -1,11 +1,11 @@
-mod test;
-mod script;
-
-
 use discv5::{enr, enr::{CombinedKey, NodeId}, TokioExecutor, Discv5, Discv5ConfigBuilder};
 use std::net::SocketAddr;
 
-fn main(){
+// use lighthouse_network::Enr;
+
+
+pub fn script() {
+ 
     // listening address and port
     let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
  
@@ -28,8 +28,7 @@ fn main(){
  
     // In order to bootstrap the routing table an external ENR should be added
     // This can be done via add_enr. I.e.:
-    let enr_1 = test::enr_provider();
-    discv5.add_enr(enr_1);
+    // discv5.add_enr();
      
     // start the discv5 server
     runtime.block_on(discv5.start(listen_addr));
@@ -37,8 +36,6 @@ fn main(){
     // run a find_node query
     runtime.block_on(async {
        let found_nodes = discv5.find_node(NodeId::random()).await.unwrap();
-       for node in found_nodes{
-           println!("Found node: {:?}", node);
-       }
+       println!("Found nodes: {:?}", found_nodes);
     });
 }

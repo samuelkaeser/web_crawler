@@ -8,3 +8,8 @@ edition = "2021"
 [dependencies]
 discv5 = "0.2.1"
 tokio = { version = "1.26.0", features = ["full"] }
+rand = "0.8.5"
+enr = { version = "*", features = ["serde", "ed25519", "rust-secp256k1"] }
+k256 = "0.13.0"
+
+# lighthouse_network =  { path = "../lighthouse/beacon_node/lighthouse_network" }
