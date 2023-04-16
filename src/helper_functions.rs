@@ -385,7 +385,7 @@ pub async fn get_entire_routing_table(
         let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
         match discv5.start(listen_addr).await {
             Ok(_) => {
-                //println!("Server in get_entire_routing_table started successfully on {:?}", listen_addr);
+                println!("Server in get_entire_routing_table started successfully on {:?}", listen_addr);
             }
             Err(e) => {
                 eprintln!("Server in get_entire_routing_table failed to start on {:?}: {:?}", listen_addr, e);
@@ -432,8 +432,18 @@ pub async fn get_entire_routing_table(
                 eprintln!("Error processing FindNode results: {:?}, continuing loop", e);
             }
         };
-        remove_nodes_from_routing_table(&mut discv5);
-        mem::drop(discv5);
+        // Wrap the Discv5 instance with an Option
+        let mut discv5_option = Some(discv5);
+
+        // To stop the server, explicitly drop the discv5 instance and set the Option to None
+        mem::drop(discv5_option.take());
+
+        // Check if the instance has been dropped
+        if discv5_option.is_none() {
+        //println!("Server stopped, port released");
+        }else{
+        println!("Motherfucking server didn't stop");
+        }
     }
     let routing_table: Vec<Enr<CombinedKey>> = new_found_nodes.into_iter().collect();
     return routing_table;

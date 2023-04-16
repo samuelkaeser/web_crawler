@@ -35,25 +35,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     fs::create_dir_all("routing_tables");
 
     let mut counter = 0;
-    while current_destination_index <= discovered_nodes.len() && (counter < 1){
+    while current_destination_index <= discovered_nodes.len(){// && (counter < 2){
         let current_routing_table = helper_functions::get_entire_routing_table(&destination_node_enr).await;
         routing_tables.push(current_routing_table.clone());
         let new_nodes = helper_functions::filter_new_nodes(&current_routing_table, &discovered_nodes);
-        for node in &new_nodes{
-            discovered_nodes.push(node.clone());
-        }
         new_nodes_tracker.push(new_nodes.len());
-        let hash_set: HashSet<_> = HashSet::from_iter(discovered_nodes.clone());
-        if hash_set.len() == discovered_nodes.len(){
-            //println!("Nodes in discovered_nodes are unique, all good");
-        }else{
-            println!("Nodes in discovered_nodes aren't unique, something went wrong");
-        }
         //println!("Currently {} nodes discovered after calling get_entire_routing_table", discovered_nodes.len());
         let enr_with_features = helper_functions::process_enrs(new_nodes).await?;
         let new_responisve_nodes = helper_functions::extract_responsive_enrs(enr_with_features.clone());
         for node in &new_responisve_nodes{
             discovered_nodes.push(node.clone());
+        }
+        let hash_set: HashSet<_> = HashSet::from_iter(discovered_nodes.clone());
+        if hash_set.len() == discovered_nodes.len(){
+            //println!("Nodes in discovered_nodes are unique, all good");
+        }else{
+            println!("Nodes in discovered_nodes aren't unique, something went wrong");
         }
         match helper_functions::save_enrs_to_file(&enr_with_features, &enr_file_name) {
             Ok(_) => println!("Saved ENRs to file successfully."),
