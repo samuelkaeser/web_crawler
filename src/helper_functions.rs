@@ -1,9 +1,19 @@
 // use enr::{EnrBuilder, k256::ecdsa::SigningKey, Enr, CombinedKey};
 use rand::{Rng};
-use std::{str::FromStr, fs, fs::{File, OpenOptions}, io::{BufRead, BufReader, Write}, path::Path, collections::HashSet};
-use discv5::{enr::{NodeId, CombinedKey, Enr}, Discv5};
+use std::{error::Error, str::FromStr, fs, fs::{File, OpenOptions}, io::{Read, Write}, path::Path, collections::HashSet, net::SocketAddr, mem};
+use discv5::{enr, enr::{CombinedKey, Enr, NodeId}, Discv5, Discv5ConfigBuilder};
 use rlp::decode;
 use tokio::runtime::Runtime;
+use tokio::sync::MutexGuard;
+use tokio::sync::{Mutex as TokioMutex, Semaphore};
+use std::sync::{Arc};
+use tokio::task;
+use serde::{Serialize, Deserialize};
+use std::time::{Duration, Instant};
+use futures::future::try_join_all;
+use futures::TryFutureExt;
+
+
 
 pub fn first_bootnode_enr()-> Enr<CombinedKey> {
     // let base_64_string = "enr:-Ly4QFPk-cTMxZ3jWTafiNblEZkQIXGF2aVzCIGW0uHp6KaEAvBMoctE8S7YU0qZtuS7By0AA4YMfKoN9ls_GJRccVpFh2F0dG5ldHOI__________-EZXRoMpCC9KcrAgAQIIS2AQAAAAAAgmlkgnY0gmlwhKh3joWJc2VjcDI1NmsxoQKrxz8M1IHwJqRIpDqdVW_U1PeixMW5SfnBD-8idYIQrIhzeW5jbmV0cw-DdGNwgiMog3VkcIIjKA";
@@ -25,7 +35,7 @@ pub fn first_bootnode_enr()-> Enr<CombinedKey> {
 		// Nimbus bootnodes
 		//"enr:-LK4QA8FfhaAjlb_BXsXxSfiysR7R52Nhi9JBt4F8SPssu8hdE1BXQQEtVDC3qStCW60LSO7hEsVHv5zm8_6Vnjhcn0Bh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhAN4aBKJc2VjcDI1NmsxoQJerDhsJ-KxZ8sHySMOCmTO6sHM3iCFQ6VMvLTe948MyYN0Y3CCI4yDdWRwgiOM",
 		//"enr:-LK4QKWrXTpV9T78hNG6s8AM6IO4XH9kFT91uZtFg1GcsJ6dKovDOr1jtAAFPnS2lvNltkOGA9k29BUN7lFh_sjuc9QBh2F0dG5ldHOIAAAAAAAAAACEZXRoMpC1MD8qAAAAAP__________gmlkgnY0gmlwhANAdd-Jc2VjcDI1NmsxoQLQa6ai7y9PMN5hpLe5HmiJSlYzMuzP7ZhwRiwHvqNXdoN0Y3CCI4yDdWRwgiOM",
-    let enr_1:Enr<CombinedKey> = discv5::enr::Enr::from_str("enr:-Ly4QFPk-cTMxZ3jWTafiNblEZkQIXGF2aVzCIGW0uHp6KaEAvBMoctE8S7YU0qZtuS7By0AA4YMfKoN9ls_GJRccVpFh2F0dG5ldHOI__________-EZXRoMpCC9KcrAgAQIIS2AQAAAAAAgmlkgnY0gmlwhKh3joWJc2VjcDI1NmsxoQKrxz8M1IHwJqRIpDqdVW_U1PeixMW5SfnBD-8idYIQrIhzeW5jbmV0cw-DdGNwgiMog3VkcIIjKA").unwrap();
+    let enr_1:Enr<CombinedKey> = discv5::enr::Enr::from_str("enr:-Jq4QItoFUuug_n_qbYbU0OY04-np2wT8rUCauOOXNi0H3BWbDj-zbfZb7otA7jZ6flbBpx1LNZK2TDebZ9dEKx84LYBhGV0aDKQtTA_KgEAAAD__________4JpZIJ2NIJpcISsaa0ZiXNlY3AyNTZrMaEDHAD2JKYevx89W0CcFJFiskdcEzkH_Wdv9iW42qLK79ODdWRwgiMo").unwrap();
     return enr_1;
 }
 
@@ -102,7 +112,7 @@ pub fn subtract_one(mut array: [u8; 32]) -> [u8; 32] {
     return array;
 }
 
-fn random_node_id_at_distance(distance: [u8; 32], from: &[u8; 32]) -> NodeId {
+pub fn random_node_id_at_distance(distance: [u8; 32], from: &[u8; 32]) -> NodeId {
     let mut rng = rand::thread_rng();
 
     // Generate a random mask at the specified distance.
@@ -139,7 +149,7 @@ pub fn print_bitstring(array: &[u8]) {
     println!();
 }
 
-fn set_bit(index: usize) -> [u8; 32] {
+pub fn set_bit(index: usize) -> [u8; 32] {
     let mut array = [0u8; 32];
     let mut byte_index = 0;
     let mut bit_index = 0;
@@ -157,8 +167,10 @@ pub async fn find_node_and_handle_error(
     discv5: &mut Discv5,
     target_node: NodeId,
 ) -> Result<Vec<Enr<CombinedKey>>, discv5::QueryError> {
+    //println!("went into find_node_and_handle_error");
     match discv5.find_node(target_node).await {
-        Ok(results) => {        
+        Ok(results) => {
+            //println!("received good results within find_node_and_handle_error");
             Ok(results)
         }
         Err(e) => {
@@ -190,13 +202,13 @@ pub fn discover_beacon_nodes_rev(runtime: &tokio::runtime::Runtime, origin_node_
         let origin_array = node_id_to_array(*origin_node_id);
         let target_node = random_node_id_at_distance(bitstring_distance, &origin_array);
         let mut findnode_results: Result<Vec<Enr<CombinedKey>>, discv5::QueryError> = Err(discv5::QueryError::ServiceNotStarted);
-        println!("Running findnode request with targetnode: {}", target_node);
+        //println!("Running findnode request with targetnode: {}", target_node);
         runtime.block_on(async {
         findnode_results = find_node_and_handle_error(discv5, target_node).await});
         match &findnode_results {
             Ok(_) => {
                 // Process the results
-                println!("Processing FindNode results:");
+                //println!("Processing FindNode results:");
                 // Filter the discovered nodes to identify beacon nodes
                 for enr in findnode_results.unwrap() {
                     if check_beacon(&enr) {
@@ -347,15 +359,284 @@ pub fn determine_furthest_node_distance(new_found_nodes: &HashSet<Enr<CombinedKe
             furthest_node = node.clone();
         }
     }
-    println!("Distance between node {} and node {} is {}, therefore the distance in the next round is {}", furthest_node.node_id().to_string(), destination_node_enr.node_id().to_string(), max_distance, max_distance);
+    //println!("Distance between node {} and node {} is {}, therefore the distance in the next round is {}", furthest_node.node_id().to_string(), destination_node_enr.node_id().to_string(), max_distance, max_distance);
     return max_distance
 }
 
-pub fn get_entire_routing_table(
-    discv5: &mut Discv5, 
+pub async fn get_entire_routing_table(
     destination_node_enr: &Enr<CombinedKey>, 
-    runtime:&Runtime,
 ) -> Vec<Enr<CombinedKey>>{
+    
+    let mut new_found_nodes = HashSet::new();
+    let mut done: bool = false;
+    let mut distance = 235;
+    //let bitstring_distance = set_bit(distance);
+    //let target_node_id: NodeId = random_node_id_at_distance(bitstring_distance, &node_id_to_array(destination_node_enr.node_id()));
+
+    while !done {
+        let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+        // construct a local ENR
+        let enr_key = CombinedKey::generate_secp256k1();
+        let enr = enr::EnrBuilder::new("v4").build(&enr_key).unwrap();
+        // default configuration
+        let config = Discv5ConfigBuilder::new().build();
+
+        // construct the discv5 server
+        let mut discv5: Discv5 = Discv5::new(enr, enr_key, config).unwrap();
+        match discv5.start(listen_addr).await {
+            Ok(_) => {
+                //println!("Server in get_entire_routing_table started successfully on {:?}", listen_addr);
+            }
+            Err(e) => {
+                eprintln!("Server in get_entire_routing_table failed to start on {:?}: {:?}", listen_addr, e);
+            }
+        }
+
+        //println!("Currently {} nodes in routing table before calling add_enr", discv5.table_entries().len());
+        let old_size = new_found_nodes.len();
+        discv5.add_enr(destination_node_enr.clone());
+        //println!("Currently {} nodes in routing table after calling add_enr", discv5.table_entries().len());
+
+        let bitstring_distance = set_bit(distance);
+        let target_node_id: NodeId = random_node_id_at_distance(bitstring_distance, &node_id_to_array(destination_node_enr.node_id()));
+        let mut result: Result<Vec<Enr<CombinedKey>>, discv5::QueryError> = Err(discv5::QueryError::ServiceNotStarted);
+        //println!("Destination node: {}", destination_node_enr.node_id().to_string());
+        result = find_node_and_handle_error(&mut discv5, target_node_id).await;
+
+        match &result {
+            Ok(_) => {
+                // Process the results
+                //println!("Processing FindNode results:");
+                for enr in result.as_ref().unwrap() {
+                    new_found_nodes.insert(enr.clone());
+                    //println!("{}", enr.to_string())
+                }
+                //println!("Found {} new nodes after calling find_node with distance: {} and traget node: {}", result.unwrap().len(), distance, target_node_id.to_string());
+                if old_size == new_found_nodes.len(){
+                    if distance == 256{
+                        //println!("Didn't find any new nodes and reached the max distance");
+                        done = true;
+                    }else{
+                        //println!("Didn't find any new nodes, increasing distance from {} by one to {}", distance, distance+1);
+                        distance += 1;
+                    }
+                }else{
+                let furthest_distance = determine_furthest_node_distance(&new_found_nodes, &destination_node_enr);
+                if furthest_distance != 0{
+                    distance = furthest_distance;
+                }
+                }
+            }
+            Err(e) => {
+                // Handle the error
+                eprintln!("Error processing FindNode results: {:?}, continuing loop", e);
+            }
+        };
+        remove_nodes_from_routing_table(&mut discv5);
+        mem::drop(discv5);
+    }
+    let routing_table: Vec<Enr<CombinedKey>> = new_found_nodes.into_iter().collect();
+    return routing_table;
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EnrPlus {
+    enr: Enr<CombinedKey>,
+    responisve: bool,
+}
+
+pub fn save_routing_table_to_file(enrs: &Vec<Enr<CombinedKey>>, file: &str) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(true) // Append to the file instead of truncating
+        .open(file)?;
+
+    for enr in enrs {
+        writeln!(file, "{}", enr.to_base64())?;
+    }
+    Ok(())
+}
+
+pub fn save_enrs_to_file(enrs: &Vec<EnrPlus>, file: &str) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(true) // Append to the file instead of truncating
+        .open(file)?;
+
+    for (index, enr) in enrs.iter().enumerate() {
+        let json_data = serde_json::to_string(&enr)?;
+        file.write_all(json_data.as_bytes())?;
+        file.write_all(b",")?;
+    }
+    Ok(())
+}
+
+pub fn delete_last_character_and_add_closing_bracket(file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Read the file content
+    let mut file = File::open(file_path)?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)?;
+
+    // Remove the last character from the content
+    content.pop();
+
+    // Add the closing bracket
+    content.push(']');
+
+    // Overwrite the file with the modified content
+    let mut file = OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(file_path)?;
+    file.write_all(content.as_bytes())?;
+
+    Ok(())
+}
+
+pub fn load_enrs_from_file(file_path: &str) -> Result<Vec<Enr<CombinedKey>>, Box<dyn std::error::Error>> {
+    // Read the JSON data from the file
+    let mut file = File::open(file_path)?;
+    let mut json_data = String::new();
+    file.read_to_string(&mut json_data)?;
+
+    // Deserialize the JSON data to a vector of EnrWithFeature structs
+    let enr_with_feature_list: Vec<EnrPlus> = serde_json::from_str(&json_data)?;
+
+    // Extract the ENR entries and create a new vector
+    let enrs: Vec<Enr<CombinedKey>> = enr_with_feature_list.into_iter().map(|entry| entry.enr).collect();
+
+    Ok(enrs)
+}
+
+pub fn write_vector_to_file(vec: Vec<usize>, file_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+    // Convert the vector of numbers to a string representation
+    let vec_string = vec.iter()
+        .map(|num| num.to_string())
+        .collect::<Vec<String>>()
+        .join("\n");
+
+    // Write the string representation to the file
+    let mut file = File::create(file_path)?;
+    file.write_all(vec_string.as_bytes())?;
+
+    Ok(())
+}
+
+async fn is_node_responsive(destination_enr: Enr<CombinedKey>) -> Result<bool, Box<dyn std::error::Error>> {
+    let listen_addr = "0.0.0.0:9000".parse::<SocketAddr>().unwrap();
+    // construct a local ENR
+    let enr_key_server = CombinedKey::generate_secp256k1();
+    let enr_server = enr::EnrBuilder::new("v4").build(&enr_key_server).unwrap();
+    // default configuration
+    let config = Discv5ConfigBuilder::new().build();
+
+    // construct the discv5 server
+    let mut discv5: Discv5 = Discv5::new(enr_server, enr_key_server, config).unwrap();
+    discv5.add_enr(destination_enr.clone());
+    //println!("call is_node_responsive with the following enr: {:?}", destination_enr);
+    match discv5.start(listen_addr).await {
+        Ok(_) => {
+            //println!("Server in is_node_responsive started successfully on {:?}", listen_addr);
+        }
+        Err(e) => {
+            eprintln!("Server in is_node_responsive failed to start on {:?}: {:?}", listen_addr, e);
+        }
+    }
+    // Send a FINDNODE request to the target ENR
+    let target_node_id = destination_enr.node_id();
+    let start = Instant::now();
+    //println!("arrived before find_node_and_handle_error - call");
+    let result = find_node_and_handle_error(&mut discv5, target_node_id).await;
+    //println!("went past the find_node_and_handle_error - call");
+    match &result {
+        Ok(_) => {
+            // Process the results
+            //println!("Processing FindNode results:");
+            //for enr in result.as_ref().unwrap() {
+            //    println!("{}", enr.to_string())
+           // }
+           // println!("Found {} new nodes after calling find_node with traget node: {}", result.unwrap().len(), target_node_id.to_string());
+        }
+        Err(e) => {
+            // Handle the error
+            eprintln!("Error processing FindNode results: {:?}", e);
+        }
+    }
+
+    let elapsed_time = start.elapsed();
+    // Wrap the Discv5 instance with an Option
+    let mut discv5_option = Some(discv5);
+
+    // To stop the server, explicitly drop the discv5 instance and set the Option to None
+    mem::drop(discv5_option.take());
+
+    // Check if the instance has been dropped
+    if discv5_option.is_none() {
+        //println!("Server stopped, port released");
+    }else{
+        println!("Motherfucking server didn't stop");
+    }
+
+
+    // Check if the response time is more than 1 millisecond
+    Ok(elapsed_time > Duration::from_millis(1))
+}
+
+pub async fn process_enrs(enrs: Vec<Enr<CombinedKey>>) -> Result<Vec<EnrPlus>, Box<dyn Error>> {
+    let mut results = Vec::new();
+
+    for enr in enrs {
+        let is_responsive = is_node_responsive(enr.clone()).await?;
+        results.push((enr, is_responsive));
+    }
+
+    let enr_with_features: Vec<EnrPlus> = results
+        .into_iter()
+        .map(|(enr, is_responsive)| EnrPlus { enr, responisve: is_responsive })
+        .collect();
+
+    Ok(enr_with_features)
+}
+
+pub fn extract_responsive_enrs(enr_with_features: Vec<EnrPlus>) -> Vec<Enr<CombinedKey>> {
+    enr_with_features
+        .into_iter()
+        .filter(|enr_with_feature| enr_with_feature.responisve)
+        .map(|enr_with_feature| enr_with_feature.enr)
+        .collect()
+}
+
+pub fn remove_nodes_from_routing_table_parallel(
+    discv5: &mut MutexGuard<Discv5>,
+) {
+    // Remove all nodes from the routing table
+    let node_ids: Vec<NodeId> = discv5.table_entries_id();
+    for node_id in node_ids {
+        discv5.remove_node(&node_id);
+    }
+}
+
+pub async fn find_node_and_handle_error_parallel<'a>(
+    discv5: &'a Discv5,
+    target_node_id: NodeId,
+) -> Result<Vec<Enr<CombinedKey>>, discv5::QueryError> {
+    match discv5.find_node(target_node_id).await {
+        Ok(results) => {        
+            Ok(results)
+        }
+        Err(e) => {
+            eprintln!("Error in find_node: {:?}", e);
+            Err(e)
+        }
+    }
+}
+
+pub async fn get_entire_routing_table_parallel(
+    discv5_mutex: Arc<TokioMutex<Discv5>>,
+    destination_node_enr: &Enr<CombinedKey>,
+) -> Vec<Enr<CombinedKey>> {
     
     let mut new_found_nodes = HashSet::new();
     let mut done: bool = false;
@@ -364,6 +645,8 @@ pub fn get_entire_routing_table(
     //let target_node_id: NodeId = random_node_id_at_distance(bitstring_distance, &node_id_to_array(destination_node_enr.node_id()));
 
     while !done {
+        // Lock the mutex and get the Discv5 instance
+        let mut discv5 = discv5_mutex.lock().await;
         println!("Currently {} nodes in routing table before calling add_enr", discv5.table_entries().len());
         let old_size = new_found_nodes.len();
         match discv5.add_enr(destination_node_enr.clone()) {
@@ -379,8 +662,7 @@ pub fn get_entire_routing_table(
         let target_node_id: NodeId = random_node_id_at_distance(bitstring_distance, &node_id_to_array(destination_node_enr.node_id()));
         let mut result: Result<Vec<Enr<CombinedKey>>, discv5::QueryError> = Err(discv5::QueryError::ServiceNotStarted);
         println!("Destination node: {}", destination_node_enr.node_id().to_string());
-        runtime.block_on(async {
-        result = find_node_and_handle_error(discv5, target_node_id).await});
+        result = find_node_and_handle_error_parallel(&*discv5, target_node_id).await;
 
         match &result {
             Ok(_) => {
@@ -408,40 +690,91 @@ pub fn get_entire_routing_table(
                 eprintln!("Error processing FindNode results: {:?}, continuing loop", e);
             }
         };
-        remove_nodes_from_routing_table(discv5);
+        remove_nodes_from_routing_table_parallel(&mut discv5);
     }
     let routing_table: Vec<Enr<CombinedKey>> = new_found_nodes.into_iter().collect();
     return routing_table;
 }
 
-pub fn save_enrs_to_file(enrs: &Vec<Enr<CombinedKey>>, file: &str) -> std::io::Result<()> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .append(true) // Append to the file instead of truncating
-        .open(file)?;
-
-    for enr in enrs {
-        writeln!(file, "{}", enr.to_base64())?;
+pub fn filter_new_nodes_parallel(
+    new_found:&Vec<Enr<CombinedKey>>, 
+    current_nodes:&Vec<Enr<CombinedKey>>,
+) -> Vec<Enr<CombinedKey>>{
+    let mut new_nodes: Vec<Enr<CombinedKey>> = Vec::new();
+    for node in new_found.iter(){
+        if !current_nodes.contains(&node){
+            new_nodes.push(node.clone());
+        }
     }
-    Ok(())
+    return new_nodes;
 }
 
-pub fn load_enrs_from_file(file: &str) -> std::io::Result<Vec<Enr<CombinedKey>>> {
-    let file = File::open(file)?;
-    let reader = BufReader::new(file);
-    let mut enrs = Vec::new();
+async fn process_node(
+    discv5_mutex: Arc<TokioMutex<Discv5>>,
+    discovered_nodes_mutex: Arc<TokioMutex<Vec<Enr<CombinedKey>>>>,
+    semaphore: Arc<Semaphore>,
+    destination_node_enr: Enr<CombinedKey>,
+) {
+    let _permit = semaphore.acquire().await;
+    let discv5_guard = discv5_mutex.lock().await;
+    let current_routing_table = get_entire_routing_table_parallel(
+        discv5_mutex.clone(),
+        &destination_node_enr,
+    )
+    .await;
+    drop(discv5_guard);
 
-    for line in reader.lines() {
-        let line = line?;
-        let enr = Enr::from_str(&line).map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Error parsing ENR: {}", err),
-            )
-        })?;
-        enrs.push(enr);
+    let discovered_nodes_guard = discovered_nodes_mutex.lock().await;
+    let new_nodes = filter_new_nodes_parallel(&current_routing_table, &*discovered_nodes_guard);
+    {
+        let mut discovered_nodes_guard = discovered_nodes_mutex.lock().await;
+        discovered_nodes_guard.extend(new_nodes);
     }
+    drop(_permit);
+}
 
-    Ok(enrs)
+
+// get a set of listening_addresses that are going to be distributed among the get_routing_table function calls and have to
+// be released again, once the function call has returned the routing_table
+pub async fn process_nodes(
+    discv5_mutex: Arc<TokioMutex<Discv5>>,
+    discovered_nodes_mutex: Arc<TokioMutex<Vec<Enr<CombinedKey>>>>,
+    semaphore: Arc<Semaphore>,
+) {
+    let mut index = 0;
+
+    loop {
+        let destination_node_enr = {
+            let discovered_nodes_guard = discovered_nodes_mutex.lock().await;
+            if index < discovered_nodes_guard.len() {
+                Some(discovered_nodes_guard[index].clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(enr) = destination_node_enr {
+            let discv5_mutex_clone = Arc::clone(&discv5_mutex);
+            let discovered_nodes_mutex_clone = Arc::clone(&discovered_nodes_mutex);
+            let semaphore_clone = Arc::clone(&semaphore);
+
+            task::spawn(async move {
+                process_node(
+                    discv5_mutex_clone,
+                    discovered_nodes_mutex_clone,
+                    semaphore_clone,
+                    enr,
+                )
+                .await;
+            });
+
+            index += 1;
+        } else {
+            // wait a bit until there are nodes again to process
+            //tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // You can add a delay here if needed
+        // tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

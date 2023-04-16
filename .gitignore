@@ -1,3 +1,7 @@
 target/
 routing_tables/
 test_enrs_base64.txt
+.vscode/
+enr_list.json
+new_nodes_numbers.txt
+code_dump.txt
